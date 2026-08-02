@@ -22,7 +22,7 @@ var embeddedRegistry []byte
 
 var defaultRegistry = mustDecode(embeddedRegistry)
 
-// Source records where and when a registry revision was audited.
+// Source records the registry's primary source and retrieval time.
 type Source struct {
 	URL         string `json:"url"`
 	RetrievedAt string `json:"retrieved_at"`
@@ -35,11 +35,19 @@ type Registry struct {
 	revision int
 	source   Source
 	symbols  []string
+	aliases  []Alias
 	matchers []symbolMatcher
 }
 
+// Alias is an accepted catalogue-symbol spelling and the canonical symbol it
+// resolves to.
+type Alias struct {
+	Name   string `json:"name"`
+	Symbol string `json:"symbol"`
+}
+
 // Reference is the normalized identity of one parsed catalogue reference.
-// Identifier includes the marker, if present.
+// Symbol is canonical, and Identifier includes the marker, if present.
 type Reference struct {
 	Symbol     string
 	Marker     string
@@ -51,12 +59,13 @@ type registryJSON struct {
 	Revision int      `json:"revision"`
 	Source   Source   `json:"source"`
 	Symbols  []string `json:"symbols"`
+	Aliases  []Alias  `json:"aliases,omitempty"`
 }
 
 type symbolMatcher struct {
-	name   string
-	folded string
-	runes  []rune
+	name      string
+	canonical string
+	runes     []rune
 }
 
 // Decode strictly decodes and validates a version-1 registry.
@@ -77,12 +86,14 @@ func Decode(data []byte) (*Registry, error) {
 	registry := &Registry{
 		schema: raw.Schema, revision: raw.Revision, source: raw.Source,
 		symbols:  append([]string(nil), raw.Symbols...),
-		matchers: make([]symbolMatcher, 0, len(raw.Symbols)),
+		aliases:  append([]Alias(nil), raw.Aliases...),
+		matchers: make([]symbolMatcher, 0, len(raw.Symbols)+len(raw.Aliases)),
 	}
 	for _, symbol := range raw.Symbols {
-		registry.matchers = append(registry.matchers, symbolMatcher{
-			name: symbol, folded: foldString(symbol), runes: []rune(symbol),
-		})
+		registry.addMatcher(symbol, symbol)
+	}
+	for _, alias := range raw.Aliases {
+		registry.addMatcher(alias.Name, alias.Symbol)
 	}
 	sort.Slice(registry.matchers, func(i, j int) bool {
 		if len(registry.matchers[i].runes) == len(registry.matchers[j].runes) {
@@ -119,44 +130,78 @@ func (r *Registry) Symbols() []string {
 	return append([]string(nil), r.symbols...)
 }
 
+// Aliases returns a caller-owned copy of the accepted non-canonical symbol
+// spellings and their canonical mappings. A trailing period is optional for
+// every symbol and alias and is therefore not repeated in this list.
+func (r *Registry) Aliases() []Alias {
+	return append([]Alias(nil), r.aliases...)
+}
+
 // Parse returns all valid catalogue references found in text.
 func (r *Registry) Parse(text string) []Reference {
 	runes := []rune(text)
 	references := make([]Reference, 0)
 	for start := 0; start < len(runes); start++ {
-		if start > 0 && isBoundaryWordRune(runes[start-1]) {
+		if start > 0 && (isBoundaryWordRune(runes[start-1]) || isHyphen(runes[start-1])) {
 			continue
 		}
 		for _, symbol := range r.matchers {
-			symbolEnd := start + len(symbol.runes)
-			if symbolEnd > len(runes) || !strings.EqualFold(string(runes[start:symbolEnd]), symbol.name) {
+			symbolEnd, ok := matchSymbol(runes, start, symbol.runes)
+			if !ok {
 				continue
 			}
-			if symbol.name == "S" && symbolEnd < len(runes) && runes[symbolEnd] == '.' {
+			if symbolEnd < len(runes) && runes[symbolEnd] == '.' {
 				symbolEnd++
 			}
-			if symbolEnd < len(runes) && isBoundaryWordRune(runes[symbolEnd]) {
+			compact := symbolEnd < len(runes) && isASCIIDigit(runes[symbolEnd])
+			if symbolEnd < len(runes) && isBoundaryWordRune(runes[symbolEnd]) && !compact {
 				continue
 			}
 			identifierStart := symbolEnd
-			for identifierStart < len(runes) && runes[identifierStart] == ' ' {
-				identifierStart++
-			}
-			if identifierStart == symbolEnd {
-				continue
+			if !compact {
+				for identifierStart < len(runes) && runes[identifierStart] == ' ' {
+					identifierStart++
+				}
+				if identifierStart == symbolEnd {
+					continue
+				}
 			}
 			marker, identifier, identifierEnd, ok := parseIdentifier(runes, identifierStart)
 			if !ok {
 				continue
 			}
 			references = append(references, Reference{
-				Symbol: symbol.folded, Marker: marker, Identifier: identifier,
+				Symbol: symbol.canonical, Marker: marker, Identifier: identifier,
 			})
 			start = identifierEnd - 1
 			break
 		}
 	}
 	return references
+}
+
+func (r *Registry) addMatcher(name, canonical string) {
+	r.matchers = append(r.matchers, symbolMatcher{
+		name:      name,
+		canonical: foldString(canonical),
+		runes:     []rune(strings.TrimSuffix(name, ".")),
+	})
+}
+
+func matchSymbol(input []rune, start int, symbol []rune) (int, bool) {
+	if start+len(symbol) > len(input) {
+		return start, false
+	}
+	for index, expected := range symbol {
+		actual := input[start+index]
+		if expected == '-' && isHyphen(actual) {
+			continue
+		}
+		if foldRune(actual) != foldRune(expected) {
+			return start, false
+		}
+	}
+	return start + len(symbol), true
 }
 
 // SharedReference reports whether both texts contain the same complete
@@ -198,7 +243,7 @@ func parseIdentifier(runes []rune, start int) (marker, identifier string, end in
 		markerEnd = start
 		coreStart = start
 	}
-	coreEnd, ok := parseCore(runes, coreStart)
+	coreEnd, ok := parseCore(runes, coreStart, hasMarker)
 	if !ok || !validIdentifierEnd(runes, coreEnd) {
 		return "", "", start, false
 	}
@@ -207,6 +252,8 @@ func parseIdentifier(runes []rune, start int) (marker, identifier string, end in
 	for _, current := range runes[start:coreEnd] {
 		switch {
 		case current == '.' || current == ' ':
+		case isHyphen(current):
+			normalized.WriteRune('-')
 		case current >= 'A' && current <= 'Z':
 			normalized.WriteRune(current + ('a' - 'A'))
 		default:
@@ -224,10 +271,23 @@ func parseIdentifier(runes []rune, start int) (marker, identifier string, end in
 
 func findMarker(runes []rune, start int) (markerEnd, coreStart int, ok bool) {
 	end := start
-	for end < len(runes) && end-start < 3 && isASCIILetter(runes[end]) {
-		end++
+	for end < len(runes) {
+		switch {
+		case isASCIILetter(runes[end]):
+			end++
+		case isHyphen(runes[end]) && end > start && end+1 < len(runes) && isASCIILetter(runes[end+1]):
+			end++
+		default:
+			goto markerComplete
+		}
 	}
+
+markerComplete:
 	if end == start {
+		return 0, 0, false
+	}
+	markerName := normalizeMarker(runes[start:end])
+	if (len([]rune(markerName)) > 3 || strings.ContainsRune(markerName, '-')) && !isExtendedMarker(markerName) {
 		return 0, 0, false
 	}
 	markerEnd = end
@@ -237,13 +297,16 @@ func findMarker(runes []rune, start int) (markerEnd, coreStart int, ok bool) {
 	if markerEnd < len(runes) && isASCIIDigit(runes[markerEnd]) {
 		return markerEnd, markerEnd, true
 	}
-	if markerEnd+1 < len(runes) && runes[markerEnd] == ' ' && isASCIIDigit(runes[markerEnd+1]) {
-		return markerEnd, markerEnd + 1, true
+	if markerEnd+1 < len(runes) && runes[markerEnd] == ' ' {
+		next := runes[markerEnd+1]
+		if isASCIIDigit(next) || isSectionedMarker(markerName) && isASCIILetter(next) {
+			return markerEnd, markerEnd + 1, true
+		}
 	}
 	return 0, 0, false
 }
 
-func parseCore(runes []rune, start int) (int, bool) {
+func parseCore(runes []rune, start int, allowSectionSpace bool) (int, bool) {
 	if start >= len(runes) || !isASCIIAlphanumeric(runes[start]) {
 		return start, false
 	}
@@ -257,10 +320,35 @@ func parseCore(runes []rune, start int) (int, bool) {
 			hasDigit = hasDigit || isASCIIDigit(current)
 			lastWasConnector = false
 			end++
-		case isCoreConnector(current):
+		case isCoreConnector(current) || isHyphen(current):
 			if lastWasConnector || end+1 >= len(runes) || !isASCIIAlphanumeric(runes[end+1]) {
 				return start, false
 			}
+			lastWasConnector = true
+			end++
+		case current == ',' && end+1 < len(runes) && isASCIIAlphanumeric(runes[end+1]):
+			if lastWasConnector {
+				return start, false
+			}
+			lastWasConnector = true
+			end++
+		case current == ',' && end+2 < len(runes) && runes[end+1] == ' ' && isASCIIDigit(runes[end+2]):
+			if lastWasConnector {
+				return start, false
+			}
+			lastWasConnector = true
+			end += 2
+		case allowSectionSpace && current == ',':
+			if lastWasConnector {
+				return start, false
+			}
+			if digitStart, ok := compositeSectionDigit(runes, end+1); ok {
+				lastWasConnector = true
+				end = digitStart
+				continue
+			}
+			return end, hasDigit && !lastWasConnector
+		case allowSectionSpace && !hasDigit && current == ' ' && end+1 < len(runes) && isASCIIDigit(runes[end+1]):
 			lastWasConnector = true
 			end++
 		default:
@@ -271,6 +359,23 @@ func parseCore(runes []rune, start int) (int, bool) {
 		}
 	}
 	return end, hasDigit && !lastWasConnector
+}
+
+func compositeSectionDigit(runes []rune, start int) (int, bool) {
+	if start < len(runes) && runes[start] == ' ' {
+		start++
+	}
+	if start >= len(runes) || !isASCIILetter(runes[start]) {
+		return start, false
+	}
+	start++
+	if start < len(runes) && runes[start] == '.' {
+		start++
+	}
+	if start < len(runes) && runes[start] == ' ' {
+		start++
+	}
+	return start, start < len(runes) && isASCIIDigit(runes[start])
 }
 
 func validIdentifierEnd(runes []rune, end int) bool {
@@ -300,7 +405,8 @@ func validateRegistry(raw registryJSON) error {
 	if len(raw.Symbols) == 0 {
 		return fmt.Errorf("catalogue registry symbols must not be empty")
 	}
-	folded := make(map[string]string, len(raw.Symbols))
+	canonical := make(map[string]string, len(raw.Symbols))
+	names := make(map[string]string, len(raw.Symbols)+len(raw.Aliases))
 	for index, symbol := range raw.Symbols {
 		if err := validateSymbol(symbol); err != nil {
 			return fmt.Errorf("catalogue registry symbol %q: %w", symbol, err)
@@ -308,13 +414,39 @@ func validateRegistry(raw registryJSON) error {
 		if index > 0 && raw.Symbols[index-1] >= symbol {
 			return fmt.Errorf("catalogue registry symbols must be sorted and unique")
 		}
-		key := foldString(strings.TrimSuffix(symbol, "."))
-		if previous, exists := folded[key]; exists {
+		key := matcherKey(symbol)
+		if previous, exists := names[key]; exists {
 			return fmt.Errorf("catalogue registry symbols %q and %q are equivalent", previous, symbol)
 		}
-		folded[key] = symbol
+		canonical[key] = symbol
+		names[key] = symbol
+	}
+	for index, alias := range raw.Aliases {
+		if err := validateSymbol(alias.Name); err != nil {
+			return fmt.Errorf("catalogue registry alias %q: %w", alias.Name, err)
+		}
+		if canonical[matcherKey(alias.Symbol)] != alias.Symbol {
+			return fmt.Errorf("catalogue registry alias %q references unknown symbol %q", alias.Name, alias.Symbol)
+		}
+		if index > 0 && raw.Aliases[index-1].Name >= alias.Name {
+			return fmt.Errorf("catalogue registry aliases must be sorted and unique")
+		}
+		key := matcherKey(alias.Name)
+		if previous, exists := names[key]; exists {
+			return fmt.Errorf("catalogue registry names %q and %q are equivalent", previous, alias.Name)
+		}
+		names[key] = alias.Name
 	}
 	return nil
+}
+
+func matcherKey(name string) string {
+	return foldString(strings.Map(func(current rune) rune {
+		if isHyphen(current) {
+			return '-'
+		}
+		return current
+	}, strings.TrimSuffix(name, ".")))
 }
 
 func validateSymbol(symbol string) error {
@@ -368,12 +500,33 @@ func normalizeMarker(value []rune) string {
 		if current == '.' {
 			continue
 		}
+		if isHyphen(current) {
+			current = '-'
+		}
 		if current >= 'A' && current <= 'Z' {
 			current += 'a' - 'A'
 		}
 		normalized.WriteRune(current)
 	}
 	return normalized.String()
+}
+
+func isExtendedMarker(value string) bool {
+	switch value {
+	case "a-juv", "anh", "b-inc", "coll", "deest", "suppl":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSectionedMarker(value string) bool {
+	switch value {
+	case "anh", "app", "suppl":
+		return true
+	default:
+		return false
+	}
 }
 
 func foldString(value string) string {
@@ -404,6 +557,10 @@ func isASCIIAlphanumeric(value rune) bool {
 
 func isCoreConnector(value rune) bool {
 	return value == '.' || value == ':' || value == '/' || value == '-'
+}
+
+func isHyphen(value rune) bool {
+	return value == '-' || value == '‐' || value == '‑' || value == '‒' || value == '–' || value == '—' || value == '−'
 }
 
 func isBoundaryWordRune(value rune) bool {
