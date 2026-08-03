@@ -42,6 +42,41 @@ removed. For example, `K. 626` and `KV 626` both resolve to canonical symbol
 `K`. See [REGISTRY.md](REGISTRY.md) for the complete grammar, normalization
 rules, audit findings, version policy, and source provenance.
 
+## Local MusicBrainz precision evaluation
+
+The repository includes a dependency-free local review command. Point it at an
+external `filtered/catalogue-references.jsonl` snapshot; the command reads that
+file but never modifies or copies it into the repository.
+
+```sh
+go run ./cmd/catalogue-eval sample -input /path/to/filtered/catalogue-references.jsonl
+go run ./cmd/catalogue-eval review
+go run ./cmd/catalogue-eval summary
+```
+
+`sample` creates `.catalogue-eval/` with a source hash, deterministic sample,
+and empty append-only judgment log, and refuses to overwrite an existing
+evaluation. It samples parser outputs from relation `number` values and unique
+work titles as separate populations. Use `review -id ID_PREFIX` to correct a
+decision by appending a replacement; the latest judgment for an item wins.
+
+Judge an output `valid` when the normalized symbol, marker, and complete
+identifier are a genuine catalogue reference in the displayed MusicBrainz
+context; use `invalid` for an emitted false positive or incorrect component,
+`uncertain` when the available context or expertise is insufficient, and
+`skip` when the item cannot be judged. Invalid and uncertain decisions require
+one of the reasons offered by the command, and an `other` reason requires a
+note.
+
+The summary reports number and title precision separately. Decided precision
+uses only representative `valid` and `invalid` judgments, with a 95% Wilson
+interval; outcome bounds additionally treat uncertain and unreviewed items as
+invalid or valid. Skips are excluded. Diagnostic items deliberately emphasize
+rare symbols and shapes, so their counts are exploratory rather than
+prevalence estimates. This workflow measures precision per emitted
+`Reference`; zero-output inputs and parser misses are not sampled, so it does
+not measure recall.
+
 ## Origin and compatibility
 
 Revision 1 was extracted from `music2bb`'s `internal/catalogue` package.
