@@ -38,8 +38,12 @@ symbol says that the spelling is catalogue-like, not that its identifier is
 globally unique.
 
 Measured with `Parse` over the snapshot's 38,077 work-number strings, revision
-1 found 12,877 references (33.82%) and revision 2 finds 34,098 (89.55%). Of
-34,239 values beginning with a letter-based prefix, revision 2 finds 34,093
+1 found at least one reference in 12,877 of them (33.82%) and revision 2 finds
+at least one reference in 34,098 (89.55%). These are per-input counts, not
+emitted-reference counts: a string that contains several references counts
+once here but yields several parsed references, so the number of emitted
+`Reference` values is higher. Of the 34,239 strings beginning with a
+letter-based prefix, revision 2 finds at least one reference in 34,093
 (99.57%). It finds at least one reference in 568 of the 614 series that have
 numbered works (92.51%). These are extraction-coverage measurements, not
 precision estimates or claims that references reused by different composers
