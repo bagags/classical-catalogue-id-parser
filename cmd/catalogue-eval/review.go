@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	catalogue "github.com/bagags/classical-catalogue-id-parser"
 )
 
 func reviewEvaluation(directory, idPrefix string, input io.Reader, output io.Writer, now func() time.Time) error {
@@ -88,6 +90,10 @@ func reviewItems(value evaluation, idPrefix string) ([]sampleItem, error) {
 func showReviewItem(output io.Writer, item sampleItem, index, total int) {
 	fmt.Fprintf(output, "\n[%d/%d] %s  field=%s cohort=%s\n", index, total, item.ID, item.Field, item.Cohort)
 	fmt.Fprintf(output, "Raw text: %s\n", item.RawText)
+	if matches := catalogue.ParseMatches(item.RawText); item.OutputIndex < len(matches) {
+		match := matches[item.OutputIndex]
+		fmt.Fprintf(output, "Match: %q (bytes [%d, %d))\n", item.RawText[match.Start:match.End], match.Start, match.End)
+	}
 	fmt.Fprintf(output, "Parsed: symbol=%q marker=%q identifier=%q\n", item.Output.Symbol, item.Output.Marker, item.Output.Identifier)
 	fmt.Fprintf(output, "Work: %s\n", item.WorkTitle)
 	fmt.Fprintf(output, "Work MBID: %s\n", item.WorkID)

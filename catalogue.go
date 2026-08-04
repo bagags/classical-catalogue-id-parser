@@ -54,6 +54,14 @@ type Reference struct {
 	Identifier string
 }
 
+// Match is a parsed Reference and its location in the input text. Start and
+// End are byte offsets such that text[Start:End] is the matched substring.
+type Match struct {
+	Reference
+	Start int
+	End   int
+}
+
 type registryJSON struct {
 	Schema   int      `json:"schema"`
 	Revision int      `json:"revision"`
@@ -139,8 +147,24 @@ func (r *Registry) Aliases() []Alias {
 
 // Parse returns all valid catalogue references found in text.
 func (r *Registry) Parse(text string) []Reference {
+	matches := r.ParseMatches(text)
+	references := make([]Reference, 0, len(matches))
+	for _, match := range matches {
+		references = append(references, match.Reference)
+	}
+	return references
+}
+
+// ParseMatches returns all valid catalogue references found in text and the
+// byte span of each match.
+func (r *Registry) ParseMatches(text string) []Match {
 	runes := []rune(text)
-	references := make([]Reference, 0)
+	byteOffsets := make([]int, 0, len(runes)+1)
+	for offset := range text {
+		byteOffsets = append(byteOffsets, offset)
+	}
+	byteOffsets = append(byteOffsets, len(text))
+	matches := make([]Match, 0)
 	for start := 0; start < len(runes); start++ {
 		if start > 0 && (isBoundaryWordRune(runes[start-1]) || isHyphen(runes[start-1])) {
 			continue
@@ -170,14 +194,16 @@ func (r *Registry) Parse(text string) []Reference {
 			if !ok {
 				continue
 			}
-			references = append(references, Reference{
-				Symbol: symbol.canonical, Marker: marker, Identifier: identifier,
+			matches = append(matches, Match{
+				Reference: Reference{Symbol: symbol.canonical, Marker: marker, Identifier: identifier},
+				Start:     byteOffsets[start],
+				End:       byteOffsets[identifierEnd],
 			})
 			start = identifierEnd - 1
 			break
 		}
 	}
-	return references
+	return matches
 }
 
 func (r *Registry) addMatcher(name, canonical string) {
@@ -226,6 +252,11 @@ func (r *Registry) SharedReference(left, right string) bool {
 // Parse uses the validated embedded registry.
 func Parse(text string) []Reference {
 	return defaultRegistry.Parse(text)
+}
+
+// ParseMatches uses the validated embedded registry.
+func ParseMatches(text string) []Match {
+	return defaultRegistry.ParseMatches(text)
 }
 
 // SharedReference uses the validated embedded registry.

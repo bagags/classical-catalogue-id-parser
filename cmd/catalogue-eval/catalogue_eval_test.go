@@ -213,6 +213,20 @@ func TestReviewIDPrefixMustBeUnambiguous(t *testing.T) {
 	}
 }
 
+func TestShowReviewItemDisplaysMatchSpan(t *testing.T) {
+	references := catalogue.Parse("Suite BWV 1 and K 2")
+	if len(references) != 2 {
+		t.Fatalf("parse fixture = %#v", references)
+	}
+	item := newSampleItem(fieldTitle, "Suite BWV 1 and K 2", references, 1, 0, "work-1", "Suite BWV 1 and K 2",
+		[]relationContext{{SeriesID: "series-1", SeriesName: "K catalogue", Number: "K 2"}})
+	var output bytes.Buffer
+	showReviewItem(&output, item, 1, 1)
+	if !strings.Contains(output.String(), `Match: "K 2" (bytes [16, 19))`) {
+		t.Fatalf("review item output missing match span:\n%s", output.String())
+	}
+}
+
 func TestJudgmentReasonValidation(t *testing.T) {
 	base := judgment{ArtifactVersion: artifactVersion, ItemID: "number-item", Timestamp: "2026-08-04T00:00:00Z"}
 	tests := []struct {

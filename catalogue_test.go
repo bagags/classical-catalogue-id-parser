@@ -203,6 +203,35 @@ func TestParseRejectsInvalidReferences(t *testing.T) {
 	}
 }
 
+func TestParseMatchesReportsByteSpans(t *testing.T) {
+	t.Parallel()
+	text := "Suite BWV 1007; čw 12 and W227"
+	matches := ParseMatches(text)
+	references := Parse(text)
+	if len(matches) != 3 || len(references) != 3 {
+		t.Fatalf("ParseMatches(%q) = %#v", text, matches)
+	}
+	want := []struct {
+		start, end int
+		raw        string
+	}{
+		{6, 14, "BWV 1007"},
+		{16, 22, "čw 12"},
+		{27, 31, "W227"},
+	}
+	for index, match := range matches {
+		if match.Reference != references[index] {
+			t.Fatalf("match %d reference = %#v, want %#v", index, match.Reference, references[index])
+		}
+		if match.Start != want[index].start || match.End != want[index].end {
+			t.Fatalf("match %d span = [%d, %d), want [%d, %d)", index, match.Start, match.End, want[index].start, want[index].end)
+		}
+		if got := text[match.Start:match.End]; got != want[index].raw {
+			t.Fatalf("match %d substring = %q, want %q", index, got, want[index].raw)
+		}
+	}
+}
+
 func TestSharedReferenceRequiresCompleteEquality(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
