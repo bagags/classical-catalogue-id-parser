@@ -132,8 +132,9 @@ func runReview(args []string, input io.Reader, output, errorOutput io.Writer, no
 	flags.SetOutput(errorOutput)
 	directory := flags.String("dir", ".catalogue-eval", "evaluation directory")
 	idPrefix := flags.String("id", "", "unambiguous item ID prefix to review or correct")
+	verbose := flags.Bool("verbose", false, "show full details for every review item")
 	flags.Usage = func() {
-		fmt.Fprintln(errorOutput, "usage: catalogue-eval review [-dir .catalogue-eval] [-id ID_PREFIX]")
+		fmt.Fprintln(errorOutput, "usage: catalogue-eval review [-dir .catalogue-eval] [-id ID_PREFIX] [-verbose]")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(args); err != nil {
@@ -148,7 +149,7 @@ func runReview(args []string, input io.Reader, output, errorOutput io.Writer, no
 	if *directory == "" {
 		return usageError{message: "review: -dir must not be empty"}
 	}
-	return reviewEvaluation(*directory, *idPrefix, input, output, now)
+	return reviewEvaluation(*directory, *idPrefix, *verbose, input, output, now)
 }
 
 func runSummary(args []string, output, errorOutput io.Writer) error {

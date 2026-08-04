@@ -171,16 +171,17 @@ func TestReviewResumesAndCorrectionAppendsReplacement(t *testing.T) {
 	}
 	fixed := func() time.Time { return time.Date(2026, 8, 4, 1, 2, 3, 4, time.UTC) }
 	var output bytes.Buffer
-	if err := reviewEvaluation(directory, "", strings.NewReader("valid\n"), &output, fixed); err != nil {
+	if err := reviewEvaluation(directory, "", false, strings.NewReader("valid\n"), &output, fixed); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), items[1].ID) || strings.Contains(output.String(), "Raw text: "+items[0].RawText) {
+	if !strings.Contains(output.String(), "MusicBrainz number: "+items[1].RawText) ||
+		strings.Contains(output.String(), "MusicBrainz number: "+items[0].RawText) {
 		t.Fatalf("resume output did not select the unreviewed item:\n%s", output.String())
 	}
 
 	output.Reset()
 	prefix := items[0].ID[:len(fieldNumber)+1+10]
-	if err := reviewEvaluation(directory, prefix, strings.NewReader("valid\n"), &output, fixed); err != nil {
+	if err := reviewEvaluation(directory, prefix, false, strings.NewReader("valid\n"), &output, fixed); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := loadEvaluation(directory)
@@ -213,7 +214,7 @@ func TestReviewIDPrefixMustBeUnambiguous(t *testing.T) {
 	}
 }
 
-func TestShowReviewItemDisplaysMatchSpan(t *testing.T) {
+func TestShowReviewItemUsesConciseDefaultAndVerboseDetails(t *testing.T) {
 	references := catalogue.Parse("Suite BWV 1 and K 2")
 	if len(references) != 2 {
 		t.Fatalf("parse fixture = %#v", references)
@@ -221,9 +222,51 @@ func TestShowReviewItemDisplaysMatchSpan(t *testing.T) {
 	item := newSampleItem(fieldTitle, "Suite BWV 1 and K 2", references, 1, 0, "work-1", "Suite BWV 1 and K 2",
 		[]relationContext{{SeriesID: "series-1", SeriesName: "K catalogue", Number: "K 2"}})
 	var output bytes.Buffer
-	showReviewItem(&output, item, 1, 1)
-	if !strings.Contains(output.String(), `Match: "K 2" (bytes [16, 19))`) {
-		t.Fatalf("review item output missing match span:\n%s", output.String())
+	showReviewItem(&output, item, 1, 1, false)
+	want := "\n[1/1]\n" +
+		"MusicBrainz title: Suite BWV 1 and K 2\n" +
+		`Parser match: "K 2" -> symbol="K" marker="" identifier="2"` + "\n"
+	if output.String() != want {
+		t.Fatalf("concise review item output:\n%s\nwant:\n%s", output.String(), want)
+	}
+	if strings.Contains(output.String(), item.ID) || strings.Contains(output.String(), "Work MBID:") {
+		t.Fatalf("concise output contains verbose metadata:\n%s", output.String())
+	}
+
+	output.Reset()
+	showReviewItem(&output, item, 1, 1, true)
+	if !strings.Contains(output.String(), `Match: "K 2" (bytes [16, 19))`) ||
+		!strings.Contains(output.String(), "Work MBID: work-1") ||
+		!strings.Contains(output.String(), "series MBID series-1") {
+		t.Fatalf("verbose review item output is missing details:\n%s", output.String())
+	}
+}
+
+func TestVerboseDecisionShowsDetailsAndReprompts(t *testing.T) {
+	directory, items := writeTestEvaluation(t, 1)
+	var output bytes.Buffer
+	input := strings.NewReader("verbose\nvalid\n")
+	if err := reviewEvaluation(directory, "", false, input, &output, time.Now); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if strings.Count(text, "Decision [valid/invalid/uncertain/skip/verbose/quit]:") != 2 {
+		t.Fatalf("verbose decision did not re-prompt:\n%s", text)
+	}
+	if !strings.Contains(text, items[0].ID) || !strings.Contains(text, "Work MBID: "+items[0].WorkID) {
+		t.Fatalf("verbose decision did not show full item details:\n%s", text)
+	}
+}
+
+func TestReviewVerboseFlagShowsDetails(t *testing.T) {
+	directory, items := writeTestEvaluation(t, 1)
+	var output, errorOutput bytes.Buffer
+	code := run([]string{"review", "-dir", directory, "-verbose"}, strings.NewReader("quit\n"), &output, &errorOutput, time.Now)
+	if code != 0 {
+		t.Fatalf("review -verbose exit code = %d, stderr:\n%s", code, errorOutput.String())
+	}
+	if !strings.Contains(output.String(), items[0].ID) || !strings.Contains(output.String(), "Work MBID: "+items[0].WorkID) {
+		t.Fatalf("review -verbose did not show full item details:\n%s", output.String())
 	}
 }
 

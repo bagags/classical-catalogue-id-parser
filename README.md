@@ -61,13 +61,15 @@ evaluation. It samples parser outputs from relation `number` values and unique
 work titles as separate populations. Use `review -id ID_PREFIX` to correct a
 decision by appending a replacement; the latest judgment for an item wins.
 
-Each review item shows the raw text, the matched substring with its byte span,
-the normalized output, and the work's catalogue relations. Judge an output
-`valid` when the normalized symbol, marker, and complete identifier are a
-genuine catalogue reference in the displayed MusicBrainz context; use
-`invalid` for an emitted false positive or incorrect component, `uncertain`
-when the available context or expertise is insufficient, and `skip` when the
-item cannot be judged. Invalid and uncertain decisions require
+Each review item shows the MusicBrainz source field and the parser's matched
+substring and normalized output. Run `review -verbose` to show item IDs, byte
+spans, work metadata, and all catalogue relations for every item, or enter
+`verbose` at the decision prompt to show those details for the current item.
+Judge an output `valid` when the normalized symbol, marker, and complete
+identifier are a genuine catalogue reference in the displayed MusicBrainz
+context; use `invalid` for an emitted false positive or incorrect component,
+`uncertain` when the available context or expertise is insufficient, and
+`skip` when the item cannot be judged. Invalid and uncertain decisions require
 one of the reasons offered by the command, and an `other` reason requires a
 note.
 

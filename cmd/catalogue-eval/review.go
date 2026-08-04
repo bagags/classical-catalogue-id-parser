@@ -13,7 +13,7 @@ import (
 	catalogue "github.com/bagags/classical-catalogue-id-parser"
 )
 
-func reviewEvaluation(directory, idPrefix string, input io.Reader, output io.Writer, now func() time.Time) error {
+func reviewEvaluation(directory, idPrefix string, verbose bool, input io.Reader, output io.Writer, now func() time.Time) error {
 	evaluation, err := loadEvaluation(directory)
 	if err != nil {
 		return err
@@ -29,8 +29,11 @@ func reviewEvaluation(directory, idPrefix string, input io.Reader, output io.Wri
 
 	reader := bufio.NewReader(input)
 	for index, item := range items {
-		showReviewItem(output, item, index+1, len(items))
-		decision, reason, note, quit, err := promptJudgment(reader, output)
+		showReviewItem(output, item, index+1, len(items), verbose)
+		showVerbose := func() {
+			showReviewItem(output, item, index+1, len(items), true)
+		}
+		decision, reason, note, quit, err := promptJudgment(reader, output, showVerbose)
 		if err != nil {
 			return err
 		}
@@ -87,7 +90,11 @@ func reviewItems(value evaluation, idPrefix string) ([]sampleItem, error) {
 	return matches, nil
 }
 
-func showReviewItem(output io.Writer, item sampleItem, index, total int) {
+func showReviewItem(output io.Writer, item sampleItem, index, total int, verbose bool) {
+	if !verbose {
+		showConciseReviewItem(output, item, index, total)
+		return
+	}
 	fmt.Fprintf(output, "\n[%d/%d] %s  field=%s cohort=%s\n", index, total, item.ID, item.Field, item.Cohort)
 	fmt.Fprintf(output, "Raw text: %s\n", item.RawText)
 	if matches := catalogue.ParseMatches(item.RawText); item.OutputIndex < len(matches) {
@@ -107,9 +114,22 @@ func showReviewItem(output io.Writer, item sampleItem, index, total int) {
 	}
 }
 
-func promptJudgment(reader *bufio.Reader, output io.Writer) (decision, reason, note string, quit bool, err error) {
+func showConciseReviewItem(output io.Writer, item sampleItem, index, total int) {
+	fmt.Fprintf(output, "\n[%d/%d]\n", index, total)
+	fmt.Fprintf(output, "MusicBrainz %s: %s\n", item.Field, item.RawText)
+	if matches := catalogue.ParseMatches(item.RawText); item.OutputIndex < len(matches) {
+		match := matches[item.OutputIndex]
+		fmt.Fprintf(output, "Parser match: %q -> symbol=%q marker=%q identifier=%q\n",
+			item.RawText[match.Start:match.End], item.Output.Symbol, item.Output.Marker, item.Output.Identifier)
+		return
+	}
+	fmt.Fprintf(output, "Parser output: symbol=%q marker=%q identifier=%q\n",
+		item.Output.Symbol, item.Output.Marker, item.Output.Identifier)
+}
+
+func promptJudgment(reader *bufio.Reader, output io.Writer, showVerbose func()) (decision, reason, note string, quit bool, err error) {
 	for {
-		answer, eof, readErr := promptLine(reader, output, "Decision [valid/invalid/uncertain/skip/quit]: ")
+		answer, eof, readErr := promptLine(reader, output, "Decision [valid/invalid/uncertain/skip/verbose/quit]: ")
 		if readErr != nil {
 			return "", "", "", false, readErr
 		}
@@ -120,6 +140,9 @@ func promptJudgment(reader *bufio.Reader, output io.Writer) (decision, reason, n
 		switch decision {
 		case "quit", "q":
 			return "", "", "", true, nil
+		case "verbose", "v":
+			showVerbose()
+			continue
 		case decisionValid, decisionSkip:
 			return decision, "", "", false, nil
 		case decisionInvalid:
@@ -135,7 +158,7 @@ func promptJudgment(reader *bufio.Reader, output io.Writer) (decision, reason, n
 			}
 			return decision, reason, note, false, nil
 		default:
-			fmt.Fprintln(output, "Enter valid, invalid, uncertain, skip, or quit.")
+			fmt.Fprintln(output, "Enter valid, invalid, uncertain, skip, verbose, or quit.")
 		}
 	}
 }
