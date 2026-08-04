@@ -71,7 +71,8 @@ context; use `invalid` for an emitted false positive or incorrect component,
 `uncertain` when the available context or expertise is insufficient, and
 `skip` when the item cannot be judged. Invalid and uncertain decisions require
 one of the reasons offered by the command, and an `other` reason requires a
-note.
+note. The decisions `valid`, `invalid`, and `uncertain` also accept the
+shortcuts `v`, `i`, and `u`, respectively.
 
 The summary reports number and title precision separately. Decided precision
 uses only representative `valid` and `invalid` judgments, with a 95% Wilson

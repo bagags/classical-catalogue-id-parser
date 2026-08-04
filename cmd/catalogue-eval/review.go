@@ -129,7 +129,7 @@ func showConciseReviewItem(output io.Writer, item sampleItem, index, total int) 
 
 func promptJudgment(reader *bufio.Reader, output io.Writer, showVerbose func()) (decision, reason, note string, quit bool, err error) {
 	for {
-		answer, eof, readErr := promptLine(reader, output, "Decision [valid/invalid/uncertain/skip/verbose/quit]: ")
+		answer, eof, readErr := promptLine(reader, output, "Decision [valid(v)/invalid(i)/uncertain(u)/skip/verbose/quit]: ")
 		if readErr != nil {
 			return "", "", "", false, readErr
 		}
@@ -140,23 +140,25 @@ func promptJudgment(reader *bufio.Reader, output io.Writer, showVerbose func()) 
 		switch decision {
 		case "quit", "q":
 			return "", "", "", true, nil
-		case "verbose", "v":
+		case "verbose":
 			showVerbose()
 			continue
-		case decisionValid, decisionSkip:
-			return decision, "", "", false, nil
-		case decisionInvalid:
+		case decisionValid, "v":
+			return decisionValid, "", "", false, nil
+		case decisionSkip:
+			return decisionSkip, "", "", false, nil
+		case decisionInvalid, "i":
 			reason, note, quit, err = promptReason(reader, output, invalidReasons, "false-positive/symbol/marker/identifier/duplicate/other")
 			if err != nil || quit {
 				return "", "", "", quit, err
 			}
-			return decision, reason, note, false, nil
-		case decisionUncertain:
+			return decisionInvalid, reason, note, false, nil
+		case decisionUncertain, "u":
 			reason, note, quit, err = promptReason(reader, output, uncertainReasons, "ambiguity/context/expertise/other")
 			if err != nil || quit {
 				return "", "", "", quit, err
 			}
-			return decision, reason, note, false, nil
+			return decisionUncertain, reason, note, false, nil
 		default:
 			fmt.Fprintln(output, "Enter valid, invalid, uncertain, skip, verbose, or quit.")
 		}

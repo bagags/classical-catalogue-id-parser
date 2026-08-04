@@ -250,11 +250,41 @@ func TestVerboseDecisionShowsDetailsAndReprompts(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	if strings.Count(text, "Decision [valid/invalid/uncertain/skip/verbose/quit]:") != 2 {
+	if strings.Count(text, "Decision [valid(v)/invalid(i)/uncertain(u)/skip/verbose/quit]:") != 2 {
 		t.Fatalf("verbose decision did not re-prompt:\n%s", text)
 	}
 	if !strings.Contains(text, items[0].ID) || !strings.Contains(text, "Work MBID: "+items[0].WorkID) {
 		t.Fatalf("verbose decision did not show full item details:\n%s", text)
+	}
+}
+
+func TestDecisionShortcutsSaveCanonicalJudgments(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		decision string
+		reason   string
+	}{
+		{name: "valid", input: "v\n", decision: decisionValid},
+		{name: "invalid", input: "i\nidentifier\n", decision: decisionInvalid, reason: "identifier"},
+		{name: "uncertain", input: "u\ncontext\n", decision: decisionUncertain, reason: "context"},
+		{name: "skip remains available", input: "skip\n", decision: decisionSkip},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			directory, items := writeTestEvaluation(t, 1)
+			if err := reviewEvaluation(directory, "", false, strings.NewReader(test.input), &bytes.Buffer{}, time.Now); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := loadEvaluation(directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := loaded.LatestJudgments[items[0].ID]
+			if got.Decision != test.decision || got.Reason != test.reason {
+				t.Fatalf("saved judgment = (%q, %q), want (%q, %q)", got.Decision, got.Reason, test.decision, test.reason)
+			}
+		})
 	}
 }
 
