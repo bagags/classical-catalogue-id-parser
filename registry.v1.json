@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "revision": 2,
+  "revision": 3,
   "source": {
     "url": "https://en.wikipedia.org/wiki/Catalogues_of_classical_compositions",
     "retrieved_at": "2026-07-15T16:20:03Z"
@@ -187,5 +187,22 @@
     {"name": "KV", "symbol": "K"},
     {"name": "Op", "symbol": "Opp."},
     {"name": "Opus", "symbol": "Opp."}
+  ],
+  "colon_depths": [
+    {"symbol": "CSWV", "depth": 1},
+    {"symbol": "DLR", "depth": 1},
+    {"symbol": "ED", "depth": 1},
+    {"symbol": "FWV", "depth": 1},
+    {"symbol": "FXWM", "depth": 1},
+    {"symbol": "GraunWV", "depth": 2},
+    {"symbol": "Hob.", "depth": 1},
+    {"symbol": "JB", "depth": 1},
+    {"symbol": "JWM", "depth": 1},
+    {"symbol": "LMV", "depth": 1},
+    {"symbol": "Opp.", "depth": 1},
+    {"symbol": "PadK", "depth": 1},
+    {"symbol": "QV", "depth": 1},
+    {"symbol": "SV", "depth": 1},
+    {"symbol": "TWV", "depth": 1}
   ]
 }

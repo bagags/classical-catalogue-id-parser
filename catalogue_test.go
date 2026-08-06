@@ -13,7 +13,7 @@ import (
 func TestEmbeddedRegistryMetadataAndExactSymbols(t *testing.T) {
 	t.Parallel()
 	registry := Default()
-	if registry.Schema() != 1 || registry.Revision() != 2 {
+	if registry.Schema() != 1 || registry.Revision() != 3 {
 		t.Fatalf("version = schema %d revision %d", registry.Schema(), registry.Revision())
 	}
 	source := registry.Source()
@@ -232,6 +232,62 @@ func TestParseMatchesReportsByteSpans(t *testing.T) {
 	}
 }
 
+func TestParseDisambiguatesSpacedColonsByCatalogueStructure(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		text       string
+		raw        string
+		symbol     string
+		identifier string
+	}{
+		{name: "title separator", text: "K. 543: IV. Finale", raw: "K. 543", symbol: "K", identifier: "543"},
+		{name: "structural spaced colon", text: "TWV 40: 202", raw: "TWV 40: 202", symbol: "TWV", identifier: "40:202"},
+		{name: "separator after structural colon", text: "TWV 40:202: IV. Allegro", raw: "TWV 40:202", symbol: "TWV", identifier: "40:202"},
+		{name: "existing compact structural colon", text: "Hob. XVI:52", raw: "Hob. XVI:52", symbol: "Hob.", identifier: "xvi:52"},
+		{name: "spaced structural colon", text: "Hob. XVI: 52", raw: "Hob. XVI: 52", symbol: "Hob.", identifier: "xvi:52"},
+		{name: "two-level structural colon", text: "GraunWV B: I:25: Finale", raw: "GraunWV B: I:25", symbol: "GraunWV", identifier: "b:i:25"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			matches := ParseMatches(tt.text)
+			if len(matches) != 1 {
+				t.Fatalf("ParseMatches(%q) = %#v", tt.text, matches)
+			}
+			want := Reference{Symbol: foldString(tt.symbol), Identifier: tt.identifier}
+			if matches[0].Reference != want || tt.text[matches[0].Start:matches[0].End] != tt.raw {
+				t.Fatalf("ParseMatches(%q) = %#v, want reference %#v and raw %q", tt.text, matches[0], want, tt.raw)
+			}
+		})
+	}
+
+	if !SharedReference("K. 543: IV. Finale", "KV 543") {
+		t.Fatal("movement title and alias should share K 543")
+	}
+}
+
+func TestParseRejectsAmbiguousOrMalformedSpacedColons(t *testing.T) {
+	t.Parallel()
+	tests := []string{
+		"TWV 33: No. 4",
+		"TWV 33: Fantasia No. 4",
+		"TWV 33: Allegro",
+		"TWV 40:  202",
+		"TWV 40: :202",
+		"K. 543: :IV. Finale",
+	}
+	for _, text := range tests {
+		text := text
+		t.Run(text, func(t *testing.T) {
+			t.Parallel()
+			if got := Parse(text); len(got) != 0 {
+				t.Fatalf("Parse(%q) = %#v, want no references", text, got)
+			}
+		})
+	}
+}
+
 func TestSharedReferenceRequiresCompleteEquality(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -287,12 +343,25 @@ func TestDecodeStrictValidation(t *testing.T) {
 	withAliases := func(symbols, aliases string) string {
 		return strings.TrimSuffix(valid(symbols), `}`) + `,"aliases":` + aliases + `}`
 	}
+	withColonDepths := func(symbols, depths string) string {
+		return strings.TrimSuffix(valid(symbols), `}`) + `,"colon_depths":` + depths + `}`
+	}
 	registry, err = Decode([]byte(withAliases(`["K"]`, `[{"name":"KV","symbol":"K"}]`)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := registry.Parse("KV 626"); !reflect.DeepEqual(got, []Reference{{Symbol: "K", Identifier: "626"}}) {
 		t.Fatalf("alias parse = %#v", got)
+	}
+	registry, err = Decode([]byte(withColonDepths(`["A","B"]`, `[{"symbol":"A","depth":1}]`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := registry.Parse("A 1: 2"); !reflect.DeepEqual(got, []Reference{{Symbol: "A", Identifier: "1:2"}}) {
+		t.Fatalf("structural colon parse = %#v", got)
+	}
+	if got := registry.Parse("B 1: Finale"); !reflect.DeepEqual(got, []Reference{{Symbol: "B", Identifier: "1"}}) {
+		t.Fatalf("terminating colon parse = %#v", got)
 	}
 
 	invalid := map[string]string{
@@ -322,7 +391,16 @@ func TestDecodeStrictValidation(t *testing.T) {
 			`{"name":"L","symbol":"K"},{"name":"M","symbol":"L"}]`),
 		"unsorted aliases": withAliases(`["K"]`, `[`+
 			`{"name":"M","symbol":"K"},{"name":"L","symbol":"K"}]`),
-		"equivalent alias": withAliases(`["K"]`, `[{"name":"K.","symbol":"K"}]`),
+		"equivalent alias":              withAliases(`["K"]`, `[{"name":"K.","symbol":"K"}]`),
+		"colon depth unknown field":     withColonDepths(`["A"]`, `[{"symbol":"A","depth":1,"extra":true}]`),
+		"colon depth unknown symbol":    withColonDepths(`["A"]`, `[{"symbol":"B","depth":1}]`),
+		"colon depth equivalent symbol": withColonDepths(`["A"]`, `[{"symbol":"A.","depth":1}]`),
+		"zero colon depth":              withColonDepths(`["A"]`, `[{"symbol":"A","depth":0}]`),
+		"negative colon depth":          withColonDepths(`["A"]`, `[{"symbol":"A","depth":-1}]`),
+		"unsorted colon depths": withColonDepths(`["A","B"]`, `[`+
+			`{"symbol":"B","depth":1},{"symbol":"A","depth":1}]`),
+		"duplicate colon depths": withColonDepths(`["A"]`, `[`+
+			`{"symbol":"A","depth":1},{"symbol":"A","depth":2}]`),
 	}
 	for name, data := range invalid {
 		name, data := name, data

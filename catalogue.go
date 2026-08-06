@@ -31,12 +31,13 @@ type Source struct {
 // Registry is a validated catalogue-symbol registry. Its contents are
 // immutable after Decode returns.
 type Registry struct {
-	schema   int
-	revision int
-	source   Source
-	symbols  []string
-	aliases  []Alias
-	matchers []symbolMatcher
+	schema      int
+	revision    int
+	source      Source
+	symbols     []string
+	aliases     []Alias
+	colonDepths map[string]int
+	matchers    []symbolMatcher
 }
 
 // Alias is an accepted catalogue-symbol spelling and the canonical symbol it
@@ -63,11 +64,17 @@ type Match struct {
 }
 
 type registryJSON struct {
-	Schema   int      `json:"schema"`
-	Revision int      `json:"revision"`
-	Source   Source   `json:"source"`
-	Symbols  []string `json:"symbols"`
-	Aliases  []Alias  `json:"aliases,omitempty"`
+	Schema      int          `json:"schema"`
+	Revision    int          `json:"revision"`
+	Source      Source       `json:"source"`
+	Symbols     []string     `json:"symbols"`
+	Aliases     []Alias      `json:"aliases,omitempty"`
+	ColonDepths []colonDepth `json:"colon_depths,omitempty"`
+}
+
+type colonDepth struct {
+	Symbol string `json:"symbol"`
+	Depth  int    `json:"depth"`
 }
 
 type symbolMatcher struct {
@@ -93,9 +100,13 @@ func Decode(data []byte) (*Registry, error) {
 
 	registry := &Registry{
 		schema: raw.Schema, revision: raw.Revision, source: raw.Source,
-		symbols:  append([]string(nil), raw.Symbols...),
-		aliases:  append([]Alias(nil), raw.Aliases...),
-		matchers: make([]symbolMatcher, 0, len(raw.Symbols)+len(raw.Aliases)),
+		symbols:     append([]string(nil), raw.Symbols...),
+		aliases:     append([]Alias(nil), raw.Aliases...),
+		colonDepths: make(map[string]int, len(raw.ColonDepths)),
+		matchers:    make([]symbolMatcher, 0, len(raw.Symbols)+len(raw.Aliases)),
+	}
+	for _, rule := range raw.ColonDepths {
+		registry.colonDepths[foldString(rule.Symbol)] = rule.Depth
 	}
 	for _, symbol := range raw.Symbols {
 		registry.addMatcher(symbol, symbol)
@@ -190,7 +201,9 @@ func (r *Registry) ParseMatches(text string) []Match {
 					continue
 				}
 			}
-			marker, identifier, identifierEnd, ok := parseIdentifier(runes, identifierStart)
+			marker, identifier, identifierEnd, ok := parseIdentifier(
+				runes, identifierStart, r.colonDepths[symbol.canonical],
+			)
 			if !ok {
 				continue
 			}
@@ -268,14 +281,14 @@ func (r Reference) key() string {
 	return r.Symbol + "\x00" + r.Marker + "\x00" + r.Identifier
 }
 
-func parseIdentifier(runes []rune, start int) (marker, identifier string, end int, ok bool) {
+func parseIdentifier(runes []rune, start, colonDepth int) (marker, identifier string, end int, ok bool) {
 	markerEnd, coreStart, hasMarker := findMarker(runes, start)
 	if !hasMarker {
 		markerEnd = start
 		coreStart = start
 	}
-	coreEnd, ok := parseCore(runes, coreStart, hasMarker)
-	if !ok || !validIdentifierEnd(runes, coreEnd) {
+	coreEnd, colonTerminated, ok := parseCore(runes, coreStart, hasMarker, colonDepth)
+	if !ok || !colonTerminated && !validIdentifierEnd(runes, coreEnd) {
 		return "", "", start, false
 	}
 
@@ -337,59 +350,84 @@ markerComplete:
 	return 0, 0, false
 }
 
-func parseCore(runes []rune, start int, allowSectionSpace bool) (int, bool) {
+func parseCore(runes []rune, start int, allowSectionSpace bool, colonDepth int) (end int, colonTerminated, ok bool) {
 	if start >= len(runes) || !isASCIIAlphanumeric(runes[start]) {
-		return start, false
+		return start, false, false
 	}
 	hasDigit := false
-	end := start
+	end = start
+	colonCount := 0
 	lastWasConnector := false
+	spacedStructuralColon := false
+	structuralTailHasDigit := false
+	validEnd := func() bool {
+		return hasDigit && !lastWasConnector && (!spacedStructuralColon || structuralTailHasDigit)
+	}
 	for end < len(runes) {
 		current := runes[end]
 		switch {
 		case isASCIIAlphanumeric(current):
 			hasDigit = hasDigit || isASCIIDigit(current)
+			structuralTailHasDigit = structuralTailHasDigit || isASCIIDigit(current)
 			lastWasConnector = false
 			end++
+		case current == ':' && end+1 < len(runes) && runes[end+1] == ' ':
+			if end+2 >= len(runes) || !isBoundaryWordRune(runes[end+2]) {
+				return start, false, false
+			}
+			if colonCount >= colonDepth {
+				return end, true, validEnd()
+			}
+			if !isASCIIAlphanumeric(runes[end+2]) {
+				return start, false, false
+			}
+			colonCount++
+			lastWasConnector = true
+			spacedStructuralColon = true
+			structuralTailHasDigit = false
+			end += 2
 		case isCoreConnector(current) || isHyphen(current):
 			if lastWasConnector || end+1 >= len(runes) || !isASCIIAlphanumeric(runes[end+1]) {
-				return start, false
+				return start, false, false
+			}
+			if current == ':' {
+				colonCount++
 			}
 			lastWasConnector = true
 			end++
 		case current == ',' && end+1 < len(runes) && isASCIIAlphanumeric(runes[end+1]):
 			if lastWasConnector {
-				return start, false
+				return start, false, false
 			}
 			lastWasConnector = true
 			end++
 		case current == ',' && end+2 < len(runes) && runes[end+1] == ' ' && isASCIIDigit(runes[end+2]):
 			if lastWasConnector {
-				return start, false
+				return start, false, false
 			}
 			lastWasConnector = true
 			end += 2
 		case allowSectionSpace && current == ',':
 			if lastWasConnector {
-				return start, false
+				return start, false, false
 			}
 			if digitStart, ok := compositeSectionDigit(runes, end+1); ok {
 				lastWasConnector = true
 				end = digitStart
 				continue
 			}
-			return end, hasDigit && !lastWasConnector
+			return end, false, validEnd()
 		case allowSectionSpace && !hasDigit && current == ' ' && end+1 < len(runes) && isASCIIDigit(runes[end+1]):
 			lastWasConnector = true
 			end++
 		default:
 			if !hasDigit && unicode.IsSpace(current) {
-				return start, false
+				return start, false, false
 			}
-			return end, hasDigit && !lastWasConnector
+			return end, false, validEnd()
 		}
 	}
-	return end, hasDigit && !lastWasConnector
+	return end, false, validEnd()
 }
 
 func compositeSectionDigit(runes []rune, start int) (int, bool) {
@@ -467,6 +505,17 @@ func validateRegistry(raw registryJSON) error {
 			return fmt.Errorf("catalogue registry names %q and %q are equivalent", previous, alias.Name)
 		}
 		names[key] = alias.Name
+	}
+	for index, rule := range raw.ColonDepths {
+		if canonical[matcherKey(rule.Symbol)] != rule.Symbol {
+			return fmt.Errorf("catalogue registry colon depth references unknown symbol %q", rule.Symbol)
+		}
+		if rule.Depth < 1 {
+			return fmt.Errorf("catalogue registry colon depth for %q must be positive", rule.Symbol)
+		}
+		if index > 0 && raw.ColonDepths[index-1].Symbol >= rule.Symbol {
+			return fmt.Errorf("catalogue registry colon depths must be sorted and unique")
+		}
 	}
 	return nil
 }

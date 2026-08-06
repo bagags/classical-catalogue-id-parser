@@ -24,8 +24,8 @@ func main() {
 	fmt.Println(references)
 
 	sameWork := catalogue.SharedReference(
-		"Cello Suite BWV 1007",
-		"Bach: bwv 1007 live",
+		"Symphony No. 39, K. 543: IV. Finale",
+		"Mozart: KV 543",
 	)
 	fmt.Println(sameWork)
 }
@@ -89,7 +89,9 @@ Revision 1 was extracted from `music2bb`'s `internal/catalogue` package.
 Revision 2 retains its public parsing API and strict registry decoder while
 expanding observed catalogue coverage and adding the `Alias` type and
 `Registry.Aliases` method. Canonical alias resolution intentionally changes
-comparison results for equivalent spellings such as `K` and `KV`.
+comparison results for equivalent spellings such as `K` and `KV`. Revision 3
+keeps the public API unchanged and adds corpus-audited colon grammar metadata
+to distinguish structural separators from title separators conservatively.
 
 ## License
 

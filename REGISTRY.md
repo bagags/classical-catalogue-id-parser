@@ -49,6 +49,20 @@ numbered works (92.51%). These are extraction-coverage measurements, not
 precision estimates or claims that references reused by different composers
 are equivalent.
 
+Revision 3 audited colon usage in the supplied `catalogue-references.jsonl`
+and `catalogue-works.jsonl` snapshots (SHA-256
+`9d9bf1b2200d08069901379140729a840bb334201ce9f4943128d4861f7188df` and
+`9e0b6b371d6ce6c4b753d5117d90681fd7ba405c78c13bfc92f2575ea58c699c`).
+Of 38,077 authoritative work-number relations, 2,273 contain a colon. They
+belong to 15 recognized canonical symbols: `CSWV`, `DLR`, `ED`, `FWV`,
+`FXWM`, `GraunWV`, `Hob.`, `JB`, `JWM`, `LMV`, `Opp.`, `PadK`, `QV`, `SV`,
+and `TWV`. Every observed number has one structural colon except the nine
+`GraunWV` values, which have two. Corresponding titles demonstrate why the
+separator cannot be classified from whitespace or the following word alone:
+the authoritative `TWV 40:202` appears as `TWV 40: 202`, `TWV 33:4` appears
+as `TWV 33: No. 4`, while the authoritative `K. 543` is followed by
+`: IV. Finale` in a recording title.
+
 ## Canonical aliases and spelling variants
 
 The explicit mappings are:
@@ -78,14 +92,17 @@ lexical canonical symbols. Callers must combine a parsed reference with artist
 or other domain context before treating such values as globally identical.
 
 The top-level `schema` changes only for an incompatible JSON structure or
-parser contract change. `revision` increments whenever symbols, aliases, or
-provenance change without changing that structure. The optional `aliases`
-array is additive within schema 1, so schema-1 registries without it remain
-valid. Decoding rejects unknown JSON fields, unsupported schemas, invalid
-provenance, empty or malformed symbols, unsorted entries, aliases to unknown
-canonical symbols, and duplicate matchers under the parser's Unicode folding,
-period, and hyphen rules. The embedded registry is decoded during package
-initialization so invalid shipped data fails immediately.
+parser contract change. `revision` increments whenever symbols, aliases,
+grammar metadata, or provenance change without changing that structure. The
+optional `aliases` and `colon_depths` arrays are additive within schema 1, so
+schema-1 registries without them remain valid. Each sorted `colon_depths`
+entry names a canonical symbol and the positive number of structural colons
+observed in that catalogue's complete identifiers. Decoding rejects unknown
+JSON fields, unsupported schemas, invalid provenance, empty or malformed
+symbols, unsorted entries, aliases or colon depths for unknown canonical
+symbols, non-positive depths, and duplicate matchers under the parser's
+Unicode folding, period, and hyphen rules. The embedded registry is decoded
+during package initialization so invalid shipped data fails immediately.
 
 ## Parser grammar and normalization
 
@@ -113,6 +130,17 @@ The identifier has these rules:
   section form `App C, S. 714`.
 - Letter-led compact cores remain cores when the leading letters are followed
   by a connector, so `XVI:52` is not split into a marker and another core.
+- A colon followed by one ASCII space is resolved using the embedded
+  catalogue grammar. Before the catalogue's structural colon depth is met,
+  the colon and space are normalized into the identifier, as in
+  `TWV 40: 202`. A continuation that does not fit the core grammar is rejected
+  instead of emitting a partial reference, and a spaced structural suffix
+  must contain its own digit. Consequently neither `TWV 33: No. 4` nor
+  `TWV 33: Fantasia No. 4` becomes the misleading `TWV 33`. Once the
+  structural depth is met, or for catalogues with no observed structural
+  colon, the spaced colon terminates the identifier. Thus
+  `K. 543: IV. Finale` yields `K 543`, and `TWV 40:202: IV. Allegro` yields
+  `TWV 40:202`. Compact colons retain the existing connector grammar.
 - Whitespace after the numeric core terminates the identifier instead of
   consuming following title words.
 - Unicode identifier letters/numbers, unsupported punctuation, empty segments,
@@ -134,7 +162,8 @@ introduced in music2bb commit `61b470184b510e25f8736f382e794a99d6bdd261`.
 Revision 2 preserves the original `Reference`, `Parse`, `SharedReference`,
 `Decode`, and registry metadata APIs. It adds `Alias` and `Registry.Aliases`.
 Canonical alias resolution intentionally changes equality for equivalent
-spellings, most notably `K` and `KV`.
+spellings, most notably `K` and `KV`. Revision 3 preserves all public APIs and
+adds only the optional, validated `colon_depths` registry grammar.
 
 The standalone module intentionally contains no `music2bb` matching profiles,
 weights, score thresholds, or other application-specific concepts.
